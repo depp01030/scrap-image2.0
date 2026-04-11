@@ -4,6 +4,17 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
+class MergeSplitSiteConfig(BaseModel):
+    enabled: bool = True
+    max_following_height: int = Field(default=800, ge=1)
+    min_primary_height: int = Field(default=2500, ge=1)
+    boundary_foreground_ratio: float = Field(default=0.03, ge=0, le=1)
+    boundary_scan_rows: int = Field(default=12, ge=1)
+    background_color_tolerance: int = Field(default=12, ge=0, le=255)
+    force_merge_groups: list[list[str]] = []
+    force_keep_single_files: list[str] = []
+
+
 ROOT_DIR = Path(__file__).resolve().parents[4]
 CONFIG_PATH = ROOT_DIR / "config.json"
 
@@ -29,6 +40,7 @@ class Settings(BaseModel):
     full_width_blank_ratio: float = Field(default=0.7, ge=0, le=1)
     full_width_min_gap_rows: int = Field(default=1, ge=1)
     recursive_split_max_depth: int = Field(default=2, ge=0)
+    merge_split_sites: dict[str, MergeSplitSiteConfig] = {}
     cors_allow_origins: list[str] = ["*"]
     clean_work_dirs_on_rerun: bool = True
 

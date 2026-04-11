@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 from datetime import datetime
+from pathlib import Path
 
 from app.schemas.job_request import JobRequest
 from app.schemas.job_response import JobResponse
 from app.services.crop_service import CropService
 from app.services.download_service import DownloadService
+from app.services.merge_split_service import MergeSplitService
 from app.services.storage_service import StorageService
 
 
@@ -20,18 +21,28 @@ class JobService:
         self.storage_service = StorageService()
         self.download_service = DownloadService()
         self.crop_service = CropService()
+        self.merge_split_service = MergeSplitService()
 
     def create_job(self, payload: JobRequest) -> JobResponse:
         job_id = self._build_job_id(payload)
         folder_name = self._build_folder_name(payload)
+        logger.info("[%s] 收到任務，準備建立工作目錄", folder_name)
+
         job_paths = self.storage_service.create_job_dirs(folder_name)
         download_result = self.download_service.download_images(
             [str(url) for url in payload.image_urls],
             job_paths["raw"],
+            job_label=folder_name,
+        )
+        merge_split_result = self.merge_split_service.prepare_processing_inputs(
+            payload.site_code,
+            job_paths["raw"],
+            job_paths["stitched"],
         )
         crop_result = self.crop_service.crop_directory(
-            job_paths["raw"],
+            Path(str(merge_split_result["processing_input_dir"])),
             job_paths["processed"],
+            site_code=payload.site_code,
         )
         published_files = self.storage_service.publish_processed_outputs(
             job_paths["processed"],
@@ -49,6 +60,7 @@ class JobService:
             "final_output_dir": str(job_paths["final"]),
             "image_urls": [str(url) for url in payload.image_urls],
             "download_result": download_result,
+            "merge_split_result": merge_split_result,
             "crop_result": crop_result,
             "published_files": published_files,
             "metadata": payload.metadata,
@@ -72,9 +84,9 @@ class JobService:
         )
 
         logger.info(
-            "Accepted job %s for %s with %s images, downloaded=%s failed=%s",
-            job_id,
+            "[%s] 任務完成：job=%s，圖片 %s 張，下載成功 %s，失敗 %s",
             folder_name,
+            job_id,
             len(payload.image_urls),
             download_result["downloaded_count"],
             download_result["failed_count"],

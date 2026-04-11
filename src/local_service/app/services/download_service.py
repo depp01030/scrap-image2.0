@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse
@@ -9,13 +10,25 @@ import httpx
 from app.core.config import settings
 
 
+logger = logging.getLogger(__name__)
+
+
 class DownloadService:
     def __init__(self) -> None:
         self.timeout = httpx.Timeout(30.0, connect=15.0)
 
-    def download_images(self, image_urls: list[str], raw_dir: Path) -> dict[str, object]:
+    def download_images(
+        self,
+        image_urls: list[str],
+        raw_dir: Path,
+        job_label: str | None = None,
+    ) -> dict[str, object]:
         downloaded_files: list[str] = []
         failures: list[dict[str, str]] = []
+        total_count = len(image_urls)
+        label = f"[{job_label}] " if job_label else ""
+
+        logger.info("%s開始下載：總共 %s 張", label, total_count)
 
         with httpx.Client(follow_redirects=True, timeout=self.timeout) as client:
             for index, image_url in enumerate(image_urls, start=1):
@@ -30,6 +43,22 @@ class DownloadService:
                             "error": str(exc),
                         }
                     )
+                finally:
+                    logger.info(
+                        "%s下載進度：%s/%s，成功 %s，失敗 %s",
+                        label,
+                        index,
+                        total_count,
+                        len(downloaded_files),
+                        len(failures),
+                    )
+
+        logger.info(
+            "%s下載完成：成功 %s 張，失敗 %s 張",
+            label,
+            len(downloaded_files),
+            len(failures),
+        )
 
         return {
             "downloaded_count": len(downloaded_files),
@@ -62,4 +91,3 @@ class DownloadService:
         if len(suffix) > 5:
             suffix = ".jpg"
         return raw_dir / f"{index:03d}{suffix}"
-

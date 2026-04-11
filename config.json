@@ -19,6 +19,24 @@
   "full_width_blank_ratio": 0.7,
   "full_width_min_gap_rows": 1,
   "recursive_split_max_depth": 2,
+  "merge_split_sites": {
+    "veryyou": {
+      "enabled": true,
+      "max_following_height": 800,
+      "min_primary_height": 2500,
+      "boundary_foreground_ratio": 0.03,
+      "boundary_scan_rows": 12,
+      "background_color_tolerance": 12,
+      "force_merge_groups": [
+        ["004.jpg", "005.jpg"],
+        ["006.jpg", "007.jpg", "008.jpg"],
+        ["011.jpg", "012.jpg"]
+      ],
+      "force_keep_single_files": [
+        "010.jpg"
+      ]
+    }
+  },
   "cors_allow_origins": ["*"],
   "clean_work_dirs_on_rerun": true
 }

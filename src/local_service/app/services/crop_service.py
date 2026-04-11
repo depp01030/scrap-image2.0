@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class CropService:
-    def crop_directory(self, raw_dir: Path, processed_dir: Path) -> dict[str, object]:
+    def crop_directory(self, raw_dir: Path, processed_dir: Path, site_code: str | None = None) -> dict[str, object]:
         processed_files: list[str] = []
         skipped_files: list[str] = []
         split_files: list[str] = []
@@ -23,7 +23,7 @@ class CropService:
             if not raw_file.is_file():
                 continue
 
-            output_paths = self.crop_single_image(raw_file, processed_dir)
+            output_paths = self.crop_single_image(raw_file, processed_dir, site_code=site_code)
             if not output_paths:
                 skipped_files.append(str(raw_file))
                 continue
@@ -41,7 +41,12 @@ class CropService:
             "skipped_files": skipped_files,
         }
 
-    def crop_single_image(self, source_path: Path, processed_dir: Path) -> list[Path]:
+    def crop_single_image(
+        self,
+        source_path: Path,
+        processed_dir: Path,
+        site_code: str | None = None,
+    ) -> list[Path]:
         image = self._read_image(source_path)
         if image is None:
             return []
@@ -53,6 +58,11 @@ class CropService:
             return []
 
         cropped = self._trim_white_border(image)
+        if self._should_keep_single(source_path, site_code):
+            target_path = processed_dir / f"{source_path.stem}{source_path.suffix or '.jpg'}"
+            self._write_image(target_path, cropped)
+            return [target_path]
+
         segments = self._split_by_content_groups(cropped)
         refined_segments: list[np.ndarray] = []
         for segment in segments:
@@ -76,6 +86,15 @@ class CropService:
             self._write_image(target_path, segment)
             output_paths.append(target_path)
         return output_paths
+
+    def _should_keep_single(self, source_path: Path, site_code: str | None) -> bool:
+        if not site_code:
+            return False
+        site_config = settings.merge_split_sites.get(site_code)
+        if site_config is None:
+            return False
+        file_name = source_path.name.lower()
+        return any(file_name == name.strip().lower() for name in site_config.force_keep_single_files)
 
     def _trim_white_border(self, image: np.ndarray) -> np.ndarray:
         content_mask = self._build_content_mask(image)
@@ -184,6 +203,8 @@ class CropService:
 
         split_segments = self._split_by_full_width_blank_bands(image)
         if len(split_segments) <= 1:
+            split_segments = self._split_by_background_blank_bands(image)
+        if len(split_segments) <= 1:
             return [image]
 
         refined: list[np.ndarray] = []
@@ -232,6 +253,82 @@ class CropService:
             segment = image[top:height, :]
             segment = self._trim_white_border(segment)
             segments.append(segment)
+
+        return segments or [image]
+
+    def _has_meaningful_background_separated_content(
+        self,
+        image: np.ndarray,
+        background_color: np.ndarray,
+    ) -> bool:
+        diff = np.abs(image.astype(np.int16) - background_color.astype(np.int16)).max(axis=2)
+        foreground_mask = diff > settings.background_diff_threshold
+        foreground_ratio = np.count_nonzero(foreground_mask) / max(image.shape[0] * image.shape[1], 1)
+        active_row_ratio = (
+            ((foreground_mask.sum(axis=1) / max(image.shape[1], 1)) > 0.02).mean()
+            if image.shape[0] > 0
+            else 0
+        )
+        return foreground_ratio >= 0.03 or active_row_ratio >= 0.2
+
+    def _split_by_background_blank_bands(self, image: np.ndarray) -> list[np.ndarray]:
+        height, width = image.shape[:2]
+        if height < settings.min_segment_height * 2:
+            return [image]
+
+        border_size = max(20, min(height, width) // 40)
+        border_samples = np.concatenate(
+            [
+                image[:border_size, :, :].reshape(-1, 3),
+                image[-border_size:, :, :].reshape(-1, 3),
+                image[:, :border_size, :].reshape(-1, 3),
+                image[:, -border_size:, :].reshape(-1, 3),
+            ],
+            axis=0,
+        )
+        background_color = np.median(border_samples, axis=0)
+        background_diff = np.abs(image.astype(np.int16) - background_color.astype(np.int16)).max(axis=2)
+        background_rows = (background_diff <= settings.background_diff_threshold).sum(axis=1) / max(width, 1)
+
+        min_gap_rows = max(20, settings.min_split_gap_rows // 3)
+        blank_ranges: list[tuple[int, int]] = []
+        start: int | None = None
+        for y, ratio in enumerate(background_rows):
+            if ratio >= 0.95 and start is None:
+                start = y
+            elif ratio < 0.95 and start is not None:
+                blank_ranges.append((start, y - 1))
+                start = None
+        if start is not None:
+            blank_ranges.append((start, height - 1))
+
+        cut_positions: list[int] = []
+        for blank_start, blank_end in blank_ranges:
+            gap_height = blank_end - blank_start + 1
+            # Ignore outer margins; only use interior background bands as split points.
+            if blank_start <= border_size or blank_end >= height - border_size:
+                continue
+            if gap_height >= min_gap_rows:
+                cut_positions.append((blank_start + blank_end) // 2)
+
+        if not cut_positions:
+            return [image]
+
+        segments: list[np.ndarray] = []
+        top = 0
+        for cut_y in cut_positions:
+            if cut_y - top >= settings.min_segment_height:
+                segment = image[top:cut_y, :]
+                segment = self._trim_white_border(segment)
+                if self._has_meaningful_background_separated_content(segment, background_color):
+                    segments.append(segment)
+            top = cut_y + 1
+
+        if height - top >= settings.min_segment_height:
+            segment = image[top:height, :]
+            segment = self._trim_white_border(segment)
+            if self._has_meaningful_background_separated_content(segment, background_color):
+                segments.append(segment)
 
         return segments or [image]
 

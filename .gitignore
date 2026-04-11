@@ -39,5 +39,6 @@ Thumbs.db
 # Runtime outputs
 tmp_output/
 output/
+test_output/
 uvicorn.stdout.log
 uvicorn.stderr.log
