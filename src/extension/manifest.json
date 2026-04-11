@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "scrap-image2.0",
+  "version": "0.1.0",
+  "description": "Local image collector for supported product pages.",
+  "permissions": ["activeTab", "contextMenus", "scripting", "storage"],
+  "host_permissions": [
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*",
+    "https://en.love-minuet.com/*",
+    "https://smartstore.naver.com/*",
+    "https://maybe-baby.co.kr/*",
+    "https://www.veryyou.co.kr/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "scrap-image2.0"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://en.love-minuet.com/*",
+        "https://smartstore.naver.com/*",
+        "https://maybe-baby.co.kr/*",
+        "https://www.veryyou.co.kr/*"
+      ],
+      "js": ["content/page-scanner.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

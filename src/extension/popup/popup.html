@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>scrap-image2.0</title>
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 16px;
+        width: 320px;
+        background: #f7f4ee;
+        color: #1f1d1a;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 12px;
+      }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 10px;
+        padding: 12px 14px;
+        background: #1f5c4f;
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      pre {
+        margin: 12px 0 0;
+        padding: 12px;
+        border-radius: 10px;
+        background: #fff;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>scrap-image2.0</h1>
+    <button id="collect-button">收集並送出圖片</button>
+    <pre id="status">等待操作</pre>
+    <script src="popup.js"></script>
+  </body>
+</html>
+

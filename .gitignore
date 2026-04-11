@@ -35,3 +35,9 @@ htmlcov/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Runtime outputs
+tmp_output/
+output/
+uvicorn.stdout.log
+uvicorn.stderr.log
