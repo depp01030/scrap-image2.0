@@ -5,9 +5,10 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from app.core.config import settings
+from app.core.progress import display_manager, progress_registry
 from app.schemas.job_request import JobRequest
 from app.schemas.job_response import JobResponse
-from app.core.config import settings
 from app.services.crop_service import CropService
 from app.services.download_service import DownloadService
 from app.services.merge_split_service import MergeSplitService
@@ -30,89 +31,144 @@ class JobService:
 
         job_id = self._build_job_id(payload)
         folder_name = self._build_folder_name(payload)
+        progress_registry.register(job_id, folder_name)
+        progress_registry.update(job_id, status="running", stage="preparing", message="create job")
+        display_manager.log_summary(job_id)
+
         logger.info("[%s] 收到任務，準備建立工作目錄", folder_name)
 
-        job_paths = self.storage_service.create_job_dirs(folder_name)
-        download_result = self.download_service.download_images(
-            [str(url) for url in payload.image_urls],
-            job_paths["raw"],
-            job_label=folder_name,
-        )
-        merge_split_result = self.merge_split_service.prepare_processing_inputs(
-            payload.site_code,
-            job_paths["raw"],
-            job_paths["stitched"],
-        )
-        crop_result = self.crop_service.crop_directory(
-            Path(str(merge_split_result["processing_input_dir"])),
-            job_paths["processed"],
-            site_code=payload.site_code,
-        )
-        published_files = self.storage_service.publish_processed_outputs(
-            job_paths["processed"],
-            job_paths["final"],
-        )
+        try:
+            job_paths = self.storage_service.create_job_dirs(folder_name)
+            download_result = self.download_service.download_images(
+                [str(url) for url in payload.image_urls],
+                job_paths["raw"],
+                job_label=folder_name,
+                job_id=job_id,
+            )
 
-        metadata = {
-            "job_id": job_id,
-            "site_code": payload.site_code,
-            "page_url": str(payload.page_url),
-            "product_id": payload.product_id,
-            "product_name": payload.product_name,
-            "folder_name": folder_name,
-            "tmp_output_dir": str(job_paths["root"]),
-            "final_output_dir": str(job_paths["final"]),
-            "image_urls": [str(url) for url in payload.image_urls],
-            "download_result": download_result,
-            "merge_split_result": merge_split_result,
-            "crop_result": crop_result,
-            "published_files": published_files,
-            "metadata": payload.metadata,
-            "created_at": datetime.now().astimezone().isoformat(),
-            "tmp_output_deleted": False,
-        }
-        self.storage_service.write_metadata(job_paths["root"], metadata)
-        self.storage_service.write_final_manifest(
-            job_paths["final"],
-            {
+            progress_registry.update(
+                job_id,
+                status="running",
+                stage="merge-split",
+                current=0,
+                total=0,
+                success_count=int(download_result["downloaded_count"]),
+                failed_count=int(download_result["failed_count"]),
+                message="prepare inputs",
+            )
+            display_manager.log_summary(job_id)
+            merge_split_result = self.merge_split_service.prepare_processing_inputs(
+                payload.site_code,
+                job_paths["raw"],
+                job_paths["stitched"],
+            )
+
+            crop_result = self.crop_service.crop_directory(
+                Path(str(merge_split_result["processing_input_dir"])),
+                job_paths["processed"],
+                site_code=payload.site_code,
+                job_id=job_id,
+                job_label=folder_name,
+            )
+
+            progress_registry.update(
+                job_id,
+                status="running",
+                stage="publishing",
+                current=0,
+                total=0,
+                success_count=int(crop_result["processed_count"]),
+                failed_count=int(crop_result["skipped_count"]),
+                message="copy final outputs",
+            )
+            display_manager.log_summary(job_id)
+            published_files = self.storage_service.publish_processed_outputs(
+                job_paths["processed"],
+                job_paths["final"],
+            )
+
+            metadata = {
+                "job_id": job_id,
                 "site_code": payload.site_code,
                 "page_url": str(payload.page_url),
                 "product_id": payload.product_id,
                 "product_name": payload.product_name,
                 "folder_name": folder_name,
-                "source_job_id": job_id,
                 "tmp_output_dir": str(job_paths["root"]),
                 "final_output_dir": str(job_paths["final"]),
+                "image_urls": [str(url) for url in payload.image_urls],
+                "download_result": download_result,
+                "merge_split_result": merge_split_result,
+                "crop_result": crop_result,
                 "published_files": published_files,
-                "created_at": metadata["created_at"],
-                "tmp_output_deleted": settings.is_delete_tmp_output,
-            },
-        )
+                "metadata": payload.metadata,
+                "created_at": datetime.now().astimezone().isoformat(),
+                "tmp_output_deleted": False,
+            }
+            self.storage_service.write_metadata(job_paths["root"], metadata)
+            self.storage_service.write_final_manifest(
+                job_paths["final"],
+                {
+                    "site_code": payload.site_code,
+                    "page_url": str(payload.page_url),
+                    "product_id": payload.product_id,
+                    "product_name": payload.product_name,
+                    "folder_name": folder_name,
+                    "source_job_id": job_id,
+                    "tmp_output_dir": str(job_paths["root"]),
+                    "final_output_dir": str(job_paths["final"]),
+                    "published_files": published_files,
+                    "created_at": metadata["created_at"],
+                    "tmp_output_deleted": settings.is_delete_tmp_output,
+                },
+            )
 
-        if settings.is_delete_tmp_output:
-            self.storage_service.delete_tmp_job_root(job_paths["root"])
-            metadata["tmp_output_deleted"] = True
+            if settings.is_delete_tmp_output:
+                self.storage_service.delete_tmp_job_root(job_paths["root"])
+                metadata["tmp_output_deleted"] = True
+                logger.info("[%s] 已刪除暫存資料夾", folder_name)
 
-        logger.info(
-            "[%s] 任務完成：job=%s，圖片 %s 張，下載成功 %s，失敗 %s",
-            folder_name,
-            job_id,
-            len(payload.image_urls),
-            download_result["downloaded_count"],
-            download_result["failed_count"],
-        )
-        if settings.is_delete_tmp_output:
-            logger.info("[%s] 已刪除暫存資料夾", folder_name)
+            logger.info(
+                "[%s] 任務完成：job=%s，圖片 %s 張，下載成功 %s，失敗 %s",
+                folder_name,
+                job_id,
+                len(payload.image_urls),
+                download_result["downloaded_count"],
+                download_result["failed_count"],
+            )
+            progress_registry.update(
+                job_id,
+                status="done",
+                stage="completed",
+                current=len(payload.image_urls),
+                total=len(payload.image_urls),
+                success_count=len(published_files),
+                failed_count=int(crop_result["skipped_count"]),
+                message=f"raw={len(payload.image_urls)} output={len(published_files)}",
+                error_summary="",
+            )
+            display_manager.log_summary(job_id)
 
-        return JobResponse(
-            success=True,
-            job_id=job_id,
-            message="job accepted",
-            tmp_output_dir=str(job_paths["root"]),
-            final_output_dir=str(job_paths["final"]),
-            downloaded_count=int(download_result["downloaded_count"]),
-            failed_count=int(download_result["failed_count"]),
-        )
+            return JobResponse(
+                success=True,
+                job_id=job_id,
+                message="job accepted",
+                tmp_output_dir=str(job_paths["root"]),
+                final_output_dir=str(job_paths["final"]),
+                downloaded_count=int(download_result["downloaded_count"]),
+                failed_count=int(download_result["failed_count"]),
+            )
+        except Exception as exc:
+            logger.exception("[%s] 任務失敗", folder_name)
+            progress_registry.update(
+                job_id,
+                status="failed",
+                stage="error",
+                message="failed",
+                error_summary=str(exc)[:120],
+            )
+            display_manager.log_summary(job_id)
+            raise
 
     def _build_job_id(self, payload: JobRequest) -> str:
         timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")

@@ -8,30 +8,73 @@ import numpy as np
 from PIL import Image, UnidentifiedImageError
 
 from app.core.config import settings
+from app.core.progress import display_manager, progress_registry
 
 
 logger = logging.getLogger(__name__)
 
 
 class CropService:
-    def crop_directory(self, raw_dir: Path, processed_dir: Path, site_code: str | None = None) -> dict[str, object]:
+    def crop_directory(
+        self,
+        raw_dir: Path,
+        processed_dir: Path,
+        site_code: str | None = None,
+        job_id: str | None = None,
+        job_label: str | None = None,
+    ) -> dict[str, object]:
         processed_files: list[str] = []
         skipped_files: list[str] = []
         split_files: list[str] = []
+        raw_files = [path for path in sorted(raw_dir.glob("*")) if path.is_file()]
+        total_count = len(raw_files)
 
-        for raw_file in sorted(raw_dir.glob("*")):
-            if not raw_file.is_file():
-                continue
+        if job_id:
+            progress_registry.update(
+                job_id,
+                status="running",
+                stage="processing",
+                current=0,
+                total=total_count,
+                success_count=0,
+                failed_count=0,
+                message="starting",
+            )
 
+        for index, raw_file in enumerate(raw_files, start=1):
             output_paths = self.crop_single_image(raw_file, processed_dir, site_code=site_code)
             if not output_paths:
                 skipped_files.append(str(raw_file))
+                if job_id:
+                    progress_registry.update(
+                        job_id,
+                        status="running",
+                        stage="processing",
+                        current=index,
+                        total=total_count,
+                        success_count=len(processed_files) + len(split_files),
+                        failed_count=len(skipped_files),
+                        message=f"skip {raw_file.name}",
+                    )
+                    display_manager.log_summary(job_id)
                 continue
 
             if len(output_paths) == 1:
                 processed_files.append(str(output_paths[0]))
             else:
                 split_files.extend(str(path) for path in output_paths)
+            if job_id:
+                progress_registry.update(
+                    job_id,
+                    status="running",
+                    stage="processing",
+                    current=index,
+                    total=total_count,
+                    success_count=len(processed_files) + len(split_files),
+                    failed_count=len(skipped_files),
+                    message=f"processing {raw_file.name}",
+                )
+                display_manager.log_summary(job_id)
 
         return {
             "processed_count": len(processed_files) + len(split_files),

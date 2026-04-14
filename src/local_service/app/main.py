@@ -5,6 +5,7 @@ from app.api.routes_health import router as health_router
 from app.api.routes_jobs import router as jobs_router
 from app.core.config import settings
 from app.core.logger import configure_logging
+from app.core.progress import display_manager
 
 
 configure_logging()
@@ -25,3 +26,12 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(jobs_router)
 
+
+@app.on_event("startup")
+def on_startup() -> None:
+    display_manager.start()
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    display_manager.stop()
