@@ -4,19 +4,6 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
-class MergeSplitSiteConfig(BaseModel):
-    enabled: bool = True
-    max_following_height: int = Field(default=800, ge=1)
-    min_primary_height: int = Field(default=2500, ge=1)
-    boundary_foreground_ratio: float = Field(default=0.03, ge=0, le=1)
-    boundary_scan_rows: int = Field(default=12, ge=1)
-    background_color_tolerance: int = Field(default=12, ge=0, le=255)
-    force_merge_groups: list[list[str]] = []
-    force_keep_single_files: list[str] = []
-    force_major_group_only_files: list[str] = []
-    force_band_refine_only_files: list[str] = []
-
-
 ROOT_DIR = Path(__file__).resolve().parents[4]
 CONFIG_PATH = ROOT_DIR / "config.json"
 
@@ -25,6 +12,14 @@ class Settings(BaseModel):
     port: int = 8765
     tmp_output_root: Path = ROOT_DIR / "tmp_output"
     final_output_root: Path = ROOT_DIR / "output"
+    is_delete_tmp_output: bool = False
+    supported_sites: list[str] = [
+        "love_minuet",
+        "naver_smartstore",
+        "maybe_baby",
+        "veryyou",
+    ]
+    merge_split_sites: list[str] = ["veryyou"]
     retry_count: int = 2
     trim_threshold: int = Field(default=245, ge=0, le=255)
     background_diff_threshold: int = Field(default=12, ge=0, le=255)
@@ -43,7 +38,6 @@ class Settings(BaseModel):
     full_width_min_gap_rows: int = Field(default=1, ge=1)
     recursive_split_max_depth: int = Field(default=2, ge=0)
     white_background_max_diff: int = Field(default=30, ge=0, le=255)
-    merge_split_sites: dict[str, MergeSplitSiteConfig] = {}
     cors_allow_origins: list[str] = ["*"]
     clean_work_dirs_on_rerun: bool = True
 

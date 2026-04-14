@@ -58,3 +58,7 @@ class StorageService:
             shutil.copy2(processed_file, target)
             published_files.append(str(target))
         return published_files
+
+    def delete_tmp_job_root(self, job_root: Path) -> None:
+        if job_root.exists():
+            shutil.rmtree(job_root)

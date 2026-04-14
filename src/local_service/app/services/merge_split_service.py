@@ -13,6 +13,10 @@ from app.services.crop_service import CropService
 class MergeSplitService:
     def __init__(self) -> None:
         self.crop_service = CropService()
+        self.boundary_scan_rows = 12
+        self.boundary_foreground_ratio = 0.03
+        self.background_color_tolerance = 12
+        self.strip_diff_threshold = 30.0
 
     def prepare_processing_inputs(
         self,
@@ -29,8 +33,7 @@ class MergeSplitService:
                 "merged_groups": [],
             }
 
-        site_config = settings.merge_split_sites.get(site_code)
-        if site_config is None or not site_config.enabled:
+        if site_code not in settings.merge_split_sites:
             self._copy_passthrough(files, stitched_dir)
             return {
                 "processing_input_dir": str(stitched_dir),
@@ -39,46 +42,26 @@ class MergeSplitService:
                 "merged_groups": [],
             }
 
+        groups = self._build_merge_groups(files, site_code)
         prepared_files: list[str] = []
         merged_groups: list[dict[str, object]] = []
-        site_config = settings.merge_split_sites.get(site_code)
-        index = 0
-        while index < len(files):
-            current = files[index]
-            forced_group = self._match_forced_group(files, index, site_config.force_merge_groups if site_config else [])
-            if forced_group is not None:
-                group_files, group_label = forced_group
-                merged_path = stitched_dir / f"{group_label}.jpg"
-                self._merge_group(group_files, merged_path)
-                prepared_files.append(str(merged_path))
-                merged_groups.append(
-                    {
-                        "inputs": [str(path) for path in group_files],
-                        "output": str(merged_path),
-                    }
-                )
-                index += len(group_files)
+
+        for group in groups:
+            if len(group) == 1:
+                target = stitched_dir / group[0].name
+                shutil.copy2(group[0], target)
+                prepared_files.append(str(target))
                 continue
 
-            if index + 1 < len(files):
-                following = files[index + 1]
-                if self._should_merge_pair(current, following, site_code):
-                    merged_path = stitched_dir / f"{current.stem}_merge_{following.stem}.jpg"
-                    self._merge_pair(current, following, merged_path)
-                    prepared_files.append(str(merged_path))
-                    merged_groups.append(
-                        {
-                            "inputs": [str(current), str(following)],
-                            "output": str(merged_path),
-                        }
-                    )
-                    index += 2
-                    continue
-
-            target = stitched_dir / current.name
-            shutil.copy2(current, target)
-            prepared_files.append(str(target))
-            index += 1
+            merged_path = stitched_dir / f"{'_merge_'.join(path.stem for path in group)}.jpg"
+            self._merge_group(group, merged_path)
+            prepared_files.append(str(merged_path))
+            merged_groups.append(
+                {
+                    "inputs": [str(path) for path in group],
+                    "output": str(merged_path),
+                }
+            )
 
         return {
             "processing_input_dir": str(stitched_dir),
@@ -91,12 +74,28 @@ class MergeSplitService:
         for source in files:
             shutil.copy2(source, stitched_dir / source.name)
 
+    def _build_merge_groups(self, files: list[Path], site_code: str) -> list[list[Path]]:
+        groups: list[list[Path]] = []
+        index = 0
+
+        while index < len(files):
+            current_group = [files[index]]
+            while index + 1 < len(files):
+                current = current_group[-1]
+                following = files[index + 1]
+                should_merge = self._should_merge_pair(current, following, site_code)
+                if not should_merge:
+                    break
+                current_group.append(following)
+                index += 1
+            groups.append(current_group)
+            index += 1
+
+        return groups
+
     def _should_merge_pair(self, current_path: Path, following_path: Path, site_code: str) -> bool:
-        site_config = settings.merge_split_sites.get(site_code)
-        if site_config is None or not site_config.enabled:
+        if site_code not in settings.merge_split_sites:
             return False
-        if self._is_forced_merge_pair(current_path, following_path, site_config.force_merge_groups):
-            return True
 
         current = self.crop_service._read_image(current_path)
         following = self.crop_service._read_image(following_path)
@@ -108,75 +107,42 @@ class MergeSplitService:
 
         if current_width != following_width:
             return False
-        if current_height < site_config.min_primary_height:
+        if current_height < settings.min_process_height or following_height < settings.min_process_height:
             return False
-        if following_height > site_config.max_following_height:
+        if not self._content_touches_bottom(current):
             return False
-
-        if not self._content_touches_bottom(current, site_config.boundary_scan_rows, site_config.boundary_foreground_ratio):
+        if not self._content_touches_top(following):
             return False
-        if not self._content_touches_top(following, site_config.boundary_scan_rows, site_config.boundary_foreground_ratio):
-            return False
-        if not self._backgrounds_match(current, following, site_config.background_color_tolerance):
-            return False
+        strip_difference = self._boundary_strip_difference(current, following)
+        if strip_difference <= self.strip_diff_threshold:
+            return True
 
-        return True
+        return self._backgrounds_match(current, following) and strip_difference <= (self.strip_diff_threshold + 8.0)
 
-    def _is_forced_merge_pair(
-        self,
-        current_path: Path,
-        following_path: Path,
-        force_merge_groups: list[list[str]],
-    ) -> bool:
-        current_name = current_path.name.lower()
-        following_name = following_path.name.lower()
-        for group in force_merge_groups:
-            if len(group) != 2:
-                continue
-            expected_current = group[0].strip().lower()
-            expected_following = group[1].strip().lower()
-            if current_name == expected_current and following_name == expected_following:
-                return True
-        return False
+    def _content_touches_bottom(self, image: np.ndarray) -> bool:
+        rows = image[-self.boundary_scan_rows :, :, :]
+        return self._foreground_ratio(rows) >= self.boundary_foreground_ratio
 
-    def _match_forced_group(
-        self,
-        files: list[Path],
-        start_index: int,
-        force_merge_groups: list[list[str]],
-    ) -> tuple[list[Path], str] | None:
-        if not force_merge_groups:
-            return None
-
-        remaining = files[start_index:]
-        for group in force_merge_groups:
-            if len(group) < 2 or len(group) > len(remaining):
-                continue
-            normalized_group = [name.strip().lower() for name in group]
-            candidate = remaining[: len(group)]
-            candidate_names = [path.name.lower() for path in candidate]
-            if candidate_names == normalized_group:
-                label = "_merge_".join(path.stem for path in candidate)
-                return candidate, label
-        return None
-
-    def _content_touches_bottom(self, image: np.ndarray, scan_rows: int, min_ratio: float) -> bool:
-        rows = image[-scan_rows:, :, :]
-        return self._foreground_ratio(rows) >= min_ratio
-
-    def _content_touches_top(self, image: np.ndarray, scan_rows: int, min_ratio: float) -> bool:
-        rows = image[:scan_rows, :, :]
-        return self._foreground_ratio(rows) >= min_ratio
+    def _content_touches_top(self, image: np.ndarray) -> bool:
+        rows = image[: self.boundary_scan_rows, :, :]
+        return self._foreground_ratio(rows) >= self.boundary_foreground_ratio
 
     def _foreground_ratio(self, rows: np.ndarray) -> float:
         gray = cv2.cvtColor(rows, cv2.COLOR_BGR2GRAY)
         foreground_mask = gray < settings.trim_threshold
         return float(np.count_nonzero(foreground_mask) / max(foreground_mask.size, 1))
 
-    def _backgrounds_match(self, current: np.ndarray, following: np.ndarray, tolerance: int) -> bool:
+    def _backgrounds_match(self, current: np.ndarray, following: np.ndarray) -> bool:
         current_background = self._estimate_background_color(current)
         following_background = self._estimate_background_color(following)
-        return bool(np.max(np.abs(current_background.astype(np.int16) - following_background.astype(np.int16))) <= tolerance)
+        return bool(
+            np.max(
+                np.abs(
+                    current_background.astype(np.int16) - following_background.astype(np.int16)
+                )
+            )
+            <= self.background_color_tolerance
+        )
 
     def _estimate_background_color(self, image: np.ndarray) -> np.ndarray:
         border = max(12, min(image.shape[:2]) // 40)
@@ -191,14 +157,21 @@ class MergeSplitService:
         )
         return np.median(samples, axis=0).astype(np.uint8)
 
-    def _merge_pair(self, current_path: Path, following_path: Path, target_path: Path) -> None:
-        current = self.crop_service._read_image(current_path)
-        following = self.crop_service._read_image(following_path)
-        if current is None or following is None:
-            raise RuntimeError(f"failed to read images for merge: {current_path}, {following_path}")
+    def _boundary_strip_difference(self, current: np.ndarray, following: np.ndarray) -> float:
+        current_strip = current[-min(self.boundary_scan_rows * 10, current.shape[0]) :, :, :]
+        following_strip = following[: min(self.boundary_scan_rows * 10, following.shape[0]), :, :]
+        height = min(current_strip.shape[0], following_strip.shape[0])
+        if height <= 0:
+            return float("inf")
 
-        merged = np.vstack([current, following])
-        self.crop_service._write_image(target_path, merged)
+        current_strip = current_strip[-height:, :, :]
+        following_strip = following_strip[:height, :, :]
+        target_width = 128
+        current_strip = cv2.resize(current_strip, (target_width, height), interpolation=cv2.INTER_AREA)
+        following_strip = cv2.resize(following_strip, (target_width, height), interpolation=cv2.INTER_AREA)
+        return float(
+            np.mean(np.abs(current_strip.astype(np.float32) - following_strip.astype(np.float32)))
+        )
 
     def _merge_group(self, paths: list[Path], target_path: Path) -> None:
         images: list[np.ndarray] = []

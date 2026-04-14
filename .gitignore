@@ -42,3 +42,10 @@ output/
 test_output/
 uvicorn.stdout.log
 uvicorn.stderr.log
+
+# Manual test outputs
+tests/output/
+
+# Dataset cases: keep only metadata.json
+tests/dataset/*/
+!tests/dataset/*/metadata.json

@@ -58,15 +58,8 @@ class CropService:
             return []
 
         cropped = self._trim_white_border(image)
-        if self._should_keep_single(source_path, site_code):
-            target_path = processed_dir / f"{source_path.stem}{source_path.suffix or '.jpg'}"
-            self._write_image(target_path, cropped)
-            return [target_path]
-
         segments = self._split_by_content_groups(cropped)
-        if self._should_keep_major_groups_only(source_path, site_code):
-            return self._write_output_segments(source_path, processed_dir, segments)
-        if self._should_keep_band_refine_only(source_path, site_code):
+        if self._should_use_band_refine_only(source_path, site_code):
             band_segments: list[np.ndarray] = []
             for segment in segments:
                 band_segments.extend(self._refine_segment_by_bands(segment))
@@ -81,32 +74,10 @@ class CropService:
 
         return self._write_output_segments(source_path, processed_dir, segments)
 
-    def _should_keep_single(self, source_path: Path, site_code: str | None) -> bool:
-        if not site_code:
+    def _should_use_band_refine_only(self, source_path: Path, site_code: str | None) -> bool:
+        if site_code != "veryyou":
             return False
-        site_config = settings.merge_split_sites.get(site_code)
-        if site_config is None:
-            return False
-        file_name = source_path.name.lower()
-        return any(file_name == name.strip().lower() for name in site_config.force_keep_single_files)
-
-    def _should_keep_major_groups_only(self, source_path: Path, site_code: str | None) -> bool:
-        if not site_code:
-            return False
-        site_config = settings.merge_split_sites.get(site_code)
-        if site_config is None:
-            return False
-        file_name = source_path.name.lower()
-        return any(file_name == name.strip().lower() for name in site_config.force_major_group_only_files)
-
-    def _should_keep_band_refine_only(self, source_path: Path, site_code: str | None) -> bool:
-        if not site_code:
-            return False
-        site_config = settings.merge_split_sites.get(site_code)
-        if site_config is None:
-            return False
-        file_name = source_path.name.lower()
-        return any(file_name == name.strip().lower() for name in site_config.force_band_refine_only_files)
+        return "_merge_" not in source_path.stem.lower()
 
     def _write_output_segments(
         self,

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.schemas.job_request import JobRequest
 from app.schemas.job_response import JobResponse
+from app.core.config import settings
 from app.services.crop_service import CropService
 from app.services.download_service import DownloadService
 from app.services.merge_split_service import MergeSplitService
@@ -24,6 +25,9 @@ class JobService:
         self.merge_split_service = MergeSplitService()
 
     def create_job(self, payload: JobRequest) -> JobResponse:
+        if payload.site_code not in settings.supported_sites:
+            raise ValueError(f"unsupported site_code: {payload.site_code}")
+
         job_id = self._build_job_id(payload)
         folder_name = self._build_folder_name(payload)
         logger.info("[%s] 收到任務，準備建立工作目錄", folder_name)
@@ -65,6 +69,7 @@ class JobService:
             "published_files": published_files,
             "metadata": payload.metadata,
             "created_at": datetime.now().astimezone().isoformat(),
+            "tmp_output_deleted": False,
         }
         self.storage_service.write_metadata(job_paths["root"], metadata)
         self.storage_service.write_final_manifest(
@@ -80,8 +85,13 @@ class JobService:
                 "final_output_dir": str(job_paths["final"]),
                 "published_files": published_files,
                 "created_at": metadata["created_at"],
+                "tmp_output_deleted": settings.is_delete_tmp_output,
             },
         )
+
+        if settings.is_delete_tmp_output:
+            self.storage_service.delete_tmp_job_root(job_paths["root"])
+            metadata["tmp_output_deleted"] = True
 
         logger.info(
             "[%s] 任務完成：job=%s，圖片 %s 張，下載成功 %s，失敗 %s",
@@ -91,6 +101,8 @@ class JobService:
             download_result["downloaded_count"],
             download_result["failed_count"],
         )
+        if settings.is_delete_tmp_output:
+            logger.info("[%s] 已刪除暫存資料夾", folder_name)
 
         return JobResponse(
             success=True,
