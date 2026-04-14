@@ -64,6 +64,14 @@ class CropService:
             return [target_path]
 
         segments = self._split_by_content_groups(cropped)
+        if self._should_keep_major_groups_only(source_path, site_code):
+            return self._write_output_segments(source_path, processed_dir, segments)
+        if self._should_keep_band_refine_only(source_path, site_code):
+            band_segments: list[np.ndarray] = []
+            for segment in segments:
+                band_segments.extend(self._refine_segment_by_bands(segment))
+            return self._write_output_segments(source_path, processed_dir, band_segments or segments)
+
         refined_segments: list[np.ndarray] = []
         for segment in segments:
             refined = self._refine_segment_by_bands(segment)
@@ -71,6 +79,41 @@ class CropService:
                 refined_segments.extend(self._recursive_full_width_split(refined_segment, depth=0))
         segments = refined_segments or segments
 
+        return self._write_output_segments(source_path, processed_dir, segments)
+
+    def _should_keep_single(self, source_path: Path, site_code: str | None) -> bool:
+        if not site_code:
+            return False
+        site_config = settings.merge_split_sites.get(site_code)
+        if site_config is None:
+            return False
+        file_name = source_path.name.lower()
+        return any(file_name == name.strip().lower() for name in site_config.force_keep_single_files)
+
+    def _should_keep_major_groups_only(self, source_path: Path, site_code: str | None) -> bool:
+        if not site_code:
+            return False
+        site_config = settings.merge_split_sites.get(site_code)
+        if site_config is None:
+            return False
+        file_name = source_path.name.lower()
+        return any(file_name == name.strip().lower() for name in site_config.force_major_group_only_files)
+
+    def _should_keep_band_refine_only(self, source_path: Path, site_code: str | None) -> bool:
+        if not site_code:
+            return False
+        site_config = settings.merge_split_sites.get(site_code)
+        if site_config is None:
+            return False
+        file_name = source_path.name.lower()
+        return any(file_name == name.strip().lower() for name in site_config.force_band_refine_only_files)
+
+    def _write_output_segments(
+        self,
+        source_path: Path,
+        processed_dir: Path,
+        segments: list[np.ndarray],
+    ) -> list[Path]:
         output_paths: list[Path] = []
         stem = source_path.stem
         suffix = source_path.suffix or ".jpg"
@@ -86,15 +129,6 @@ class CropService:
             self._write_image(target_path, segment)
             output_paths.append(target_path)
         return output_paths
-
-    def _should_keep_single(self, source_path: Path, site_code: str | None) -> bool:
-        if not site_code:
-            return False
-        site_config = settings.merge_split_sites.get(site_code)
-        if site_config is None:
-            return False
-        file_name = source_path.name.lower()
-        return any(file_name == name.strip().lower() for name in site_config.force_keep_single_files)
 
     def _trim_white_border(self, image: np.ndarray) -> np.ndarray:
         content_mask = self._build_content_mask(image)
@@ -202,7 +236,7 @@ class CropService:
             return [image]
 
         split_segments = self._split_by_full_width_blank_bands(image)
-        if len(split_segments) <= 1:
+        if len(split_segments) <= 1 and self._is_white_background_scene(image):
             split_segments = self._split_by_background_blank_bands(image)
         if len(split_segments) <= 1:
             return [image]
@@ -277,16 +311,7 @@ class CropService:
             return [image]
 
         border_size = max(20, min(height, width) // 40)
-        border_samples = np.concatenate(
-            [
-                image[:border_size, :, :].reshape(-1, 3),
-                image[-border_size:, :, :].reshape(-1, 3),
-                image[:, :border_size, :].reshape(-1, 3),
-                image[:, -border_size:, :].reshape(-1, 3),
-            ],
-            axis=0,
-        )
-        background_color = np.median(border_samples, axis=0)
+        background_color = self._estimate_background_color(image)
         background_diff = np.abs(image.astype(np.int16) - background_color.astype(np.int16)).max(axis=2)
         background_rows = (background_diff <= settings.background_diff_threshold).sum(axis=1) / max(width, 1)
 
@@ -331,6 +356,25 @@ class CropService:
                 segments.append(segment)
 
         return segments or [image]
+
+    def _is_white_background_scene(self, image: np.ndarray) -> bool:
+        background_color = self._estimate_background_color(image)
+        white_diff = np.abs(background_color.astype(np.int16) - 255).max()
+        return bool(white_diff <= settings.white_background_max_diff)
+
+    def _estimate_background_color(self, image: np.ndarray) -> np.ndarray:
+        height, width = image.shape[:2]
+        border_size = max(20, min(height, width) // 40)
+        border_samples = np.concatenate(
+            [
+                image[:border_size, :, :].reshape(-1, 3),
+                image[-border_size:, :, :].reshape(-1, 3),
+                image[:, :border_size, :].reshape(-1, 3),
+                image[:, -border_size:, :].reshape(-1, 3),
+            ],
+            axis=0,
+        )
+        return np.median(border_samples, axis=0)
 
     def _refine_segment_by_bands(self, image: np.ndarray) -> list[np.ndarray]:
         height, width = image.shape[:2]

@@ -19,6 +19,7 @@
   "full_width_blank_ratio": 0.7,
   "full_width_min_gap_rows": 1,
   "recursive_split_max_depth": 2,
+  "white_background_max_diff": 30,
   "merge_split_sites": {
     "veryyou": {
       "enabled": true,
@@ -32,7 +33,9 @@
         ["006.jpg", "007.jpg", "008.jpg"],
         ["011.jpg", "012.jpg"]
       ],
-      "force_keep_single_files": [
+      "force_keep_single_files": [],
+      "force_major_group_only_files": [],
+      "force_band_refine_only_files": [
         "010.jpg"
       ]
     }

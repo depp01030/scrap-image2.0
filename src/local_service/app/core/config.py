@@ -13,6 +13,8 @@ class MergeSplitSiteConfig(BaseModel):
     background_color_tolerance: int = Field(default=12, ge=0, le=255)
     force_merge_groups: list[list[str]] = []
     force_keep_single_files: list[str] = []
+    force_major_group_only_files: list[str] = []
+    force_band_refine_only_files: list[str] = []
 
 
 ROOT_DIR = Path(__file__).resolve().parents[4]
@@ -40,6 +42,7 @@ class Settings(BaseModel):
     full_width_blank_ratio: float = Field(default=0.7, ge=0, le=1)
     full_width_min_gap_rows: int = Field(default=1, ge=1)
     recursive_split_max_depth: int = Field(default=2, ge=0)
+    white_background_max_diff: int = Field(default=30, ge=0, le=255)
     merge_split_sites: dict[str, MergeSplitSiteConfig] = {}
     cors_allow_origins: list[str] = ["*"]
     clean_work_dirs_on_rerun: bool = True
