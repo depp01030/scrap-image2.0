@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image, UnidentifiedImageError
 
 from app.core.config import settings
-from app.core.progress import display_manager, progress_registry
+from app.core.progress import progress_registry
 
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class CropService:
         if job_id:
             progress_registry.update(
                 job_id,
-                status="running",
+                status="RUNNING",
                 stage="processing",
                 current=0,
                 total=total_count,
@@ -48,7 +48,7 @@ class CropService:
                 if job_id:
                     progress_registry.update(
                         job_id,
-                        status="running",
+                        status="RUNNING",
                         stage="processing",
                         current=index,
                         total=total_count,
@@ -56,7 +56,6 @@ class CropService:
                         failed_count=len(skipped_files),
                         message=f"skip {raw_file.name}",
                     )
-                    display_manager.log_summary(job_id)
                 continue
 
             if len(output_paths) == 1:
@@ -66,7 +65,7 @@ class CropService:
             if job_id:
                 progress_registry.update(
                     job_id,
-                    status="running",
+                    status="RUNNING",
                     stage="processing",
                     current=index,
                     total=total_count,
@@ -74,7 +73,6 @@ class CropService:
                     failed_count=len(skipped_files),
                     message=f"processing {raw_file.name}",
                 )
-                display_manager.log_summary(job_id)
 
         return {
             "processed_count": len(processed_files) + len(split_files),

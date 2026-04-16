@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.core.config import settings
-from app.core.progress import display_manager, progress_registry
+from app.core.progress import progress_registry
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class DownloadService:
         if job_id:
             progress_registry.update(
                 job_id,
-                status="running",
+                status="RUNNING",
                 stage="downloading",
                 current=0,
                 total=total_count,
@@ -65,7 +65,7 @@ class DownloadService:
                     if job_id:
                         progress_registry.update(
                             job_id,
-                            status="running",
+                            status="RUNNING",
                             stage="downloading",
                             current=index,
                             total=total_count,
@@ -73,7 +73,6 @@ class DownloadService:
                             failed_count=len(failures),
                             message="active",
                         )
-                        display_manager.log_summary(job_id)
 
         logger.info(
             "[%s] 下載完成：成功 %s 張，失敗 %s 張",

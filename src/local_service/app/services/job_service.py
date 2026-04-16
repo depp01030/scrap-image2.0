@@ -32,8 +32,7 @@ class JobService:
         job_id = self._build_job_id(payload)
         folder_name = self._build_folder_name(payload)
         progress_registry.register(job_id, folder_name)
-        progress_registry.update(job_id, status="running", stage="preparing", message="create job")
-        display_manager.log_summary(job_id)
+        progress_registry.update(job_id, status="RUNNING", stage="preparing", message="create job")
 
         logger.info("[%s] 收到任務，準備建立工作目錄", folder_name)
 
@@ -48,7 +47,7 @@ class JobService:
 
             progress_registry.update(
                 job_id,
-                status="running",
+                status="RUNNING",
                 stage="merge-split",
                 current=0,
                 total=0,
@@ -56,7 +55,6 @@ class JobService:
                 failed_count=int(download_result["failed_count"]),
                 message="prepare inputs",
             )
-            display_manager.log_summary(job_id)
             merge_split_result = self.merge_split_service.prepare_processing_inputs(
                 payload.site_code,
                 job_paths["raw"],
@@ -73,7 +71,7 @@ class JobService:
 
             progress_registry.update(
                 job_id,
-                status="running",
+                status="RUNNING",
                 stage="publishing",
                 current=0,
                 total=0,
@@ -81,7 +79,6 @@ class JobService:
                 failed_count=int(crop_result["skipped_count"]),
                 message="copy final outputs",
             )
-            display_manager.log_summary(job_id)
             published_files = self.storage_service.publish_processed_outputs(
                 job_paths["processed"],
                 job_paths["final"],
@@ -138,7 +135,7 @@ class JobService:
             )
             progress_registry.update(
                 job_id,
-                status="done",
+                status="DONE",
                 stage="completed",
                 current=len(payload.image_urls),
                 total=len(payload.image_urls),
@@ -147,7 +144,6 @@ class JobService:
                 message=f"raw={len(payload.image_urls)} output={len(published_files)}",
                 error_summary="",
             )
-            display_manager.log_summary(job_id)
 
             return JobResponse(
                 success=True,
@@ -162,12 +158,11 @@ class JobService:
             logger.exception("[%s] 任務失敗", folder_name)
             progress_registry.update(
                 job_id,
-                status="failed",
+                status="FAILED",
                 stage="error",
                 message="failed",
-                error_summary=str(exc)[:120],
+                error_summary=exc.__class__.__name__,
             )
-            display_manager.log_summary(job_id)
             raise
 
     def _build_job_id(self, payload: JobRequest) -> str:

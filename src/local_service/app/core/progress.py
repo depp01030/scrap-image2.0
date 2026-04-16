@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import logging
+import os
+import sys
 import threading
 from dataclasses import dataclass, replace
 from datetime import datetime
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class ProgressEntry:
     job_id: str
     label: str
-    status: str = "pending"
+    status: str = "PENDING"
     stage: str = "pending"
     current: int = 0
     total: int = 0
@@ -46,35 +44,73 @@ class ProgressRegistry:
 
     def snapshot(self) -> list[ProgressEntry]:
         with self._lock:
-            return sorted(self._entries.values(), key=lambda item: item.label.lower())
+            return list(self._entries.values())
 
     def _now(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
 
 
 class DisplayManager:
-    def __init__(self, registry: ProgressRegistry) -> None:
+    def __init__(self, registry: ProgressRegistry, refresh_interval: float = 0.5) -> None:
         self.registry = registry
+        self.refresh_interval = refresh_interval
+        self._enabled = sys.stdout.isatty()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
 
     def start(self) -> None:
-        return None
+        if not self._enabled:
+            return
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._stop_event.clear()
+            self._thread = threading.Thread(target=self._run, name="cli-display", daemon=True)
+            self._thread.start()
 
     def stop(self) -> None:
-        return None
-
-    def log_summary(self, job_id: str) -> None:
-        entry = next((item for item in self.registry.snapshot() if item.job_id == job_id), None)
-        if entry is None:
+        if not self._enabled:
             return
-        logger.info(self._format_entry(entry))
+        self._stop_event.set()
+        with self._lock:
+            if self._thread:
+                self._thread.join(timeout=2.0)
+                self._thread = None
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.refresh_interval):
+            self.render()
+
+    def render(self) -> None:
+        if not self._enabled:
+            return
+        entries = self.registry.snapshot()
+        if not entries:
+            return
+        os.system("cls")
+        print("scrap-image2.0 local service")
+        print("==================================================")
+        for entry in entries:
+            print(self._format_entry(entry))
 
     def _format_entry(self, entry: ProgressEntry) -> str:
-        progress = f"{entry.current}/{entry.total}" if entry.total else "-"
-        message = entry.error_summary or entry.message or "-"
+        if entry.status == "DONE":
+            return (
+                f"[DONE]    {entry.label} | {entry.message or self._build_progress(entry)}"
+            )
+        if entry.status == "FAILED":
+            short_error = entry.error_summary or "Error"
+            return f"[FAILED]  {entry.label} | {short_error}"
         return (
-            f"[{entry.label}] {entry.status} | {entry.stage} | "
-            f"progress={progress} | success={entry.success_count} | failed={entry.failed_count} | {message}"
+            f"[RUNNING] {entry.label} | {entry.stage} | {self._build_progress(entry)}"
+            f" | ok={entry.success_count} fail={entry.failed_count}"
         )
+
+    def _build_progress(self, entry: ProgressEntry) -> str:
+        if entry.total:
+            return f"{entry.current}/{entry.total}"
+        return "-"
 
 
 progress_registry = ProgressRegistry()
