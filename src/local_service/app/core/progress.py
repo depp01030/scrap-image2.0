@@ -62,6 +62,7 @@ class DisplayManager:
     def start(self) -> None:
         if not self._enabled:
             return
+        print("Welcome to scrap-image2.0 local service")
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return

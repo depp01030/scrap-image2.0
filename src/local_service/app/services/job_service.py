@@ -26,18 +26,29 @@ class JobService:
         self.merge_split_service = MergeSplitService()
 
     def create_job(self, payload: JobRequest) -> JobResponse:
+        # Reject unsupported sites as early as possible so we do not create
+        # any working directories or partial outputs for invalid requests.
         if payload.site_code not in settings.supported_sites:
             raise ValueError(f"unsupported site_code: {payload.site_code}")
 
+        # Build the stable identifiers used throughout the run:
+        # - job_id is the internal execution id
+        # - folder_name is the human-readable case/output folder name
         job_id = self._build_job_id(payload)
         folder_name = self._build_folder_name(payload)
+
+        # Register this job in the in-memory progress table so the terminal
+        # display thread can start rendering it immediately.
         progress_registry.register(job_id, folder_name)
         progress_registry.update(job_id, status="RUNNING", stage="preparing", message="create job")
 
         logger.info("[%s] 收到任務，準備建立工作目錄", folder_name)
 
         try:
+            # Create / reset the working directories for this case.
             job_paths = self.storage_service.create_job_dirs(folder_name)
+
+            # Step 1: download all source images into tmp_output/<case>/raw.
             download_result = self.download_service.download_images(
                 [str(url) for url in payload.image_urls],
                 job_paths["raw"],
@@ -45,6 +56,9 @@ class JobService:
                 job_id=job_id,
             )
 
+            # Step 2: prepare the actual processing inputs.
+            # Some sites can be processed directly from raw images, while
+            # others first merge adjacent images into stitched inputs.
             progress_registry.update(
                 job_id,
                 status="RUNNING",
@@ -61,6 +75,7 @@ class JobService:
                 job_paths["stitched"],
             )
 
+            # Step 3: crop / split the prepared images into final photo units.
             crop_result = self.crop_service.crop_directory(
                 Path(str(merge_split_result["processing_input_dir"])),
                 job_paths["processed"],
@@ -69,6 +84,7 @@ class JobService:
                 job_label=folder_name,
             )
 
+            # Step 4: copy the processed outputs into output/<case>/.
             progress_registry.update(
                 job_id,
                 status="RUNNING",
@@ -84,6 +100,8 @@ class JobService:
                 job_paths["final"],
             )
 
+            # Persist a full metadata snapshot in tmp_output so we can inspect
+            # or replay this exact run later.
             metadata = {
                 "job_id": job_id,
                 "site_code": payload.site_code,
@@ -103,23 +121,9 @@ class JobService:
                 "tmp_output_deleted": False,
             }
             self.storage_service.write_metadata(job_paths["root"], metadata)
-            self.storage_service.write_final_manifest(
-                job_paths["final"],
-                {
-                    "site_code": payload.site_code,
-                    "page_url": str(payload.page_url),
-                    "product_id": payload.product_id,
-                    "product_name": payload.product_name,
-                    "folder_name": folder_name,
-                    "source_job_id": job_id,
-                    "tmp_output_dir": str(job_paths["root"]),
-                    "final_output_dir": str(job_paths["final"]),
-                    "published_files": published_files,
-                    "created_at": metadata["created_at"],
-                    "tmp_output_deleted": settings.is_delete_tmp_output,
-                },
-            )
 
+            # Optionally remove the temporary working tree after a successful
+            # run. This is controlled by config.json.
             if settings.is_delete_tmp_output:
                 self.storage_service.delete_tmp_job_root(job_paths["root"])
                 metadata["tmp_output_deleted"] = True
@@ -133,6 +137,8 @@ class JobService:
                 download_result["downloaded_count"],
                 download_result["failed_count"],
             )
+
+            # Mark the job as completed for the terminal progress display.
             progress_registry.update(
                 job_id,
                 status="DONE",
@@ -155,6 +161,8 @@ class JobService:
                 failed_count=int(download_result["failed_count"]),
             )
         except Exception as exc:
+            # Keep the terminal summary short, and let the detailed traceback
+            # go to service.log via logger.exception().
             logger.exception("[%s] 任務失敗", folder_name)
             progress_registry.update(
                 job_id,
